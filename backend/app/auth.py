@@ -1,6 +1,6 @@
 import os
 import bcrypt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -32,7 +32,7 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -70,7 +70,12 @@ def check_subscription_status(user: User):
         return True  # El Administrador nunca expira
 
     if user.subscription_expires_at:
-        if datetime.utcnow() > user.subscription_expires_at:
+        exp_date = user.subscription_expires_at
+        # Garantizar que ambas fechas tengan información de zona horaria (UTC)
+        if exp_date.tzinfo is None:
+            exp_date = exp_date.replace(tzinfo=timezone.utc)
+
+        if datetime.now(timezone.utc) > exp_date:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="EXPIRED_SUBSCRIPTION"

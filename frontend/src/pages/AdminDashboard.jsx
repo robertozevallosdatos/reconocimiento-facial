@@ -33,6 +33,7 @@ export default function AdminDashboard() {
   const [selectedUserFolder, setSelectedUserFolder] = useState('');
   const [isAdminRole, setIsAdminRole] = useState(false);
   const [daysActive, setDaysActive] = useState(30);
+  const [telegramChatId, setTelegramChatId] = useState(''); // 👈 NUEVO: Estado para Telegram Chat ID
 
   // Subida de imagen
   const [file, setFile] = useState(null);
@@ -204,7 +205,8 @@ export default function AdminDashboard() {
         password: newPassword,
         is_admin: isAdminRole,
         folder_name: isAdminRole ? null : selectedUserFolder,
-        days_active: Number(daysActive)
+        days_active: Number(daysActive),
+        telegram_chat_id: telegramChatId.trim() || null // 👈 NUEVO: Enviar telegram_chat_id
       }),
     });
 
@@ -216,6 +218,7 @@ export default function AdminDashboard() {
       setIsAdminRole(false);
       setSelectedUserFolder('');
       setDaysActive(30);
+      setTelegramChatId('');
       loadUsers();
     } else {
       const err = await res.json();
@@ -442,6 +445,7 @@ export default function AdminDashboard() {
                   <th className="p-3">Usuario</th>
                   <th className="p-3">Rol</th>
                   <th className="p-3">Carpeta Asignada</th>
+                  <th className="p-3">Telegram Chat ID</th> {/* 👈 Header para Telegram */}
                   <th className="p-3">Vencimiento</th>
                   <th className="p-3 text-right">Acción</th>
                 </tr>
@@ -455,8 +459,17 @@ export default function AdminDashboard() {
                         {u.is_admin ? 'Administrador' : 'Cliente'}
                       </span>
                     </td>
-                    <td className="p-3 text-gray-600">{u.folder_name}</td>
-                    <td className="p-3 text-gray-500 text-xs">{u.subscription_expires_at}</td>
+                    <td className="p-3 text-gray-600">{u.folder_name || '-'}</td>
+                    <td className="p-3 text-gray-600 text-xs font-mono">
+                      {u.telegram_chat_id ? (
+                        <span className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded border border-emerald-200">
+                          ✈️ {u.telegram_chat_id}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 italic">No configurado</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-gray-500 text-xs">{u.subscription_expires_at || 'Sin límite'}</td>
                     <td className="p-3 text-right">
                       {!u.is_admin && (
                         <button
@@ -605,6 +618,19 @@ export default function AdminDashboard() {
                       className="w-full border px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <span className="text-xs text-gray-400">Ejemplo: 30 días para 1 mes.</span>
+                  </div>
+
+                  {/* 🔹 NUEVO: Input para Telegram Chat ID */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Telegram Chat ID (Opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ejemplo: 123456789"
+                      value={telegramChatId}
+                      onChange={(e) => setTelegramChatId(e.target.value)}
+                      className="w-full border px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="text-xs text-gray-400">Servirá para enviar alertas automáticas de vencimiento.</span>
                   </div>
                 </>
               )}

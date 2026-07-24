@@ -9,6 +9,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.config import settings
 from app.database import create_db_and_tables, engine, get_session
@@ -17,6 +18,7 @@ from app.auth import get_password_hash, get_current_user, check_subscription_sta
 from app.telegram_client import telegram_bridge
 from app.queue_manager import job_queue
 from app.routes import auth, folders
+from app.services.scheduler import check_subscriptions_and_notify  # 👈 Importamos el programador
 
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("downloads", exist_ok=True)
@@ -39,9 +41,19 @@ async def lifespan(app_instance: FastAPI):
 
     await telegram_bridge.start()
     asyncio.create_task(job_queue.start_worker())
+
+    # 🔹 INICIAR EL PROGRAMADOR DE TAREAS PARA REVISAR VENCIMIENTOS
+    scheduler = BackgroundScheduler()
+    # Ejecuta la revisión todos los días a las 09:00 AM
+    scheduler.add_job(check_subscriptions_and_notify, 'cron', hour=9, minute=0)
+    scheduler.start()
+    print("--> Tarea programada de notificación de vencimientos iniciada.")
+
     yield
 
-# --- AQUÍ DEBE DEFINIRSE 'app' ANTES DE SUS RUTAS Y ROUTERS ---
+    # Detener tareas al apagar el servidor
+    scheduler.shutdown()
+
 app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
