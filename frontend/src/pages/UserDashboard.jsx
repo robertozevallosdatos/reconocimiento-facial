@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { fetchWithAuth, authService } from '../services/api';
 
+// Obtener la URL base del backend desde la variable de entorno o fallback a Render/Local
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://tu-backend.onrender.com';
+
 export default function UserDashboard() {
   const [user, setUser] = useState(null);
   const [myFolder, setMyFolder] = useState(null);
@@ -8,7 +11,7 @@ export default function UserDashboard() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // ⚠️ PON AQUÍ TU USUARIO PERSONAL DE TELEGRAM (sin el @)
+  // USUARIO PERSONAL DE TELEGRAM
   const MY_TELEGRAM_USERNAME = "alsahhimkal"; 
 
   useEffect(() => {
@@ -99,6 +102,49 @@ export default function UserDashboard() {
     }
   };
 
+  // ✏️ FUNCIÓN PARA RENOMBRAR PDF
+  const handleRename = async (pdfId, currentFilename) => {
+    const newName = prompt("Ingresa el nuevo nombre para el archivo:", currentFilename);
+    if (!newName || newName.trim() === '' || newName === currentFilename) return;
+
+    try {
+      const res = await fetchWithAuth(`/pdfs/${pdfId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_name: newName })
+      });
+
+      if (res.ok) {
+        if (user?.folder_id) loadFolderFiles(user.folder_id);
+      } else {
+        const err = await res.json();
+        alert(`Error al renombrar: ${err.detail || 'No se pudo actualizar'}`);
+      }
+    } catch (e) {
+      alert(`Error de conexión: ${e.message}`);
+    }
+  };
+
+  // 🗑️ FUNCIÓN PARA ELIMINAR PDF E IMAGEN
+  const handleDelete = async (pdfId, filename) => {
+    if (!confirm(`¿Estás seguro de eliminar el archivo "${filename}" y su imagen?`)) return;
+
+    try {
+      const res = await fetchWithAuth(`/pdfs/${pdfId}`, {
+        method: 'DELETE'
+      });
+
+      if (res.ok) {
+        if (user?.folder_id) loadFolderFiles(user.folder_id);
+      } else {
+        const err = await res.json();
+        alert(`Error al eliminar: ${err.detail || 'No se pudo borrar'}`);
+      }
+    } catch (e) {
+      alert(`Error de conexión: ${e.message}`);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-100 p-6">
       {/* Header Principal */}
@@ -117,7 +163,7 @@ export default function UserDashboard() {
 
       <div className="max-w-4xl mx-auto space-y-6">
         
-        {/* Tarjeta con Estado de Suscripción y Telegram */}
+        {/* Tarjeta con Estado de Suscripción */}
         <div className="bg-white p-5 rounded-xl shadow border border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h3 className="text-sm font-bold text-gray-700 mb-1">Estado de tu Cuenta</h3>
@@ -155,7 +201,7 @@ export default function UserDashboard() {
           </div>
         </div>
 
-        {/* 🚨 ADVERTENCIA SI ESTÁ POR VENCER O VENCIDO CON BOTÓN DE CONTACTO A TELEGRAM */}
+        {/* Advertencia si vence pronto */}
         {(subInfo.isExpired || subInfo.daysLeft <= 3) && (
           <div className={`p-5 rounded-xl border flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm ${
             subInfo.isExpired ? 'bg-red-50 border-red-200 text-red-800' : 'bg-amber-50 border-amber-200 text-amber-800'
@@ -169,7 +215,7 @@ export default function UserDashboard() {
                     : `Tu suscripción vencerá pronto (${subInfo.daysLeft} días restantes)`}
                 </h4>
                 <p className="text-xs mt-0.5">
-                  Contacta al administrador por Telegram para solicitar tu renovación y mantener tu servicio activo.
+                  Contacta al administrador por Telegram para solicitar tu renovación.
                 </p>
               </div>
             </div>
@@ -208,25 +254,66 @@ export default function UserDashboard() {
           </button>
         </div>
 
-        {/* Historial de PDFs */}
+        {/* Historial de PDFs con Vista Previa, Renombrar y Eliminar */}
         <div className="bg-white p-6 rounded-xl shadow border border-gray-100">
           <h2 className="text-lg font-bold text-gray-800 mb-4">Mis Documentos PDF</h2>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {!myFolder || myFolder.files.length === 0 ? (
               <p className="text-sm text-gray-400">No tienes documentos procesados aún.</p>
             ) : (
-              myFolder.files.map((file) => (
-                <div key={file.id} className="p-3 border rounded-lg flex justify-between items-center bg-gray-50">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{file.filename}</p>
-                    <p className="text-xs text-gray-400">{file.uploaded_at}</p>
+              myFolder.files.map((pdf) => (
+                <div key={pdf.id} className="p-3 border rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center bg-gray-50 gap-3">
+                  
+                  {/* Vista Previa de la Imagen + Nombre de Archivo */}
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    {pdf.image_path ? (
+                      <img 
+                        src={`${API_BASE_URL}/${pdf.image_path}`} 
+                        alt="Previsualización" 
+                        className="w-12 h-12 object-cover rounded-lg border border-gray-200 flex-shrink-0"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center text-xs text-gray-400 flex-shrink-0">
+                        📄
+                      </div>
+                    )}
+
+                    <div className="truncate">
+                      <p className="text-sm font-semibold text-gray-800 truncate" title={pdf.filename}>
+                        {pdf.filename}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {pdf.uploaded_at ? new Date(pdf.uploaded_at).toLocaleString() : 'Reciente'}
+                      </p>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => handleDownload(file.id, file.filename)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors"
-                  >
-                    Descargar PDF
-                  </button>
+
+                  {/* Acciones: Renombrar, Descargar y Eliminar */}
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                    <button
+                      onClick={() => handleRename(pdf.id, pdf.filename)}
+                      title="Renombrar archivo"
+                      className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
+                    >
+                      ✏️ Renombrar
+                    </button>
+
+                    <button
+                      onClick={() => handleDownload(pdf.id, pdf.filename)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium transition-colors"
+                    >
+                      ⬇️ Descargar
+                    </button>
+
+                    <button
+                      onClick={() => handleDelete(pdf.id, pdf.filename)}
+                      title="Eliminar archivo"
+                      className="bg-red-100 hover:bg-red-200 text-red-600 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+
                 </div>
               ))
             )}
