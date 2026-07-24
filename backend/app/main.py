@@ -19,14 +19,29 @@ from app.telegram_client import telegram_bridge
 from app.queue_manager import job_queue
 from app.routes import auth, folders
 from app.services.scheduler import check_subscriptions_and_notify  # 👈 Importamos el programador
+from sqlalchemy import text
 
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("downloads", exist_ok=True)
 
+from sqlalchemy import text # 👈 Asegúrate de tener este import arriba en el archivo
+
 @asynccontextmanager
-async def lifespan(app_instance: FastAPI):
+async def lifespan(app: FastAPI):
     create_db_and_tables()
 
+    # 🔹 MIGRACIÓN AUTO-EJECUTABLE EN POSTGRESQL (RENDER)
+    # Intenta agregar la columna si la base de datos ya existía en Render
+    with Session(engine) as session:
+        try:
+            session.exec(text('ALTER TABLE "user" ADD COLUMN telegram_chat_id VARCHAR;'))
+            session.commit()
+            print("--> Columna telegram_chat_id agregada con éxito.")
+        except Exception:
+            # Si la columna ya existe, PostgreSQL lanza un error y simplemente lo ignoramos
+            session.rollback()
+
+    # Configuración e inserción del Admin inicial
     with Session(engine) as session:
         admin_user = session.exec(select(User).where(User.username == "admin")).first()
         if not admin_user:
