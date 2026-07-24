@@ -31,14 +31,12 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
 
     # 🔹 MIGRACIÓN AUTO-EJECUTABLE EN POSTGRESQL (RENDER)
-    # Intenta agregar la columna si la base de datos ya existía en Render
     with Session(engine) as session:
         try:
             session.exec(text('ALTER TABLE "user" ADD COLUMN telegram_chat_id VARCHAR;'))
             session.commit()
             print("--> Columna telegram_chat_id agregada con éxito.")
         except Exception:
-            # Si la columna ya existe, PostgreSQL lanza un error y simplemente lo ignoramos
             session.rollback()
 
     # Configuración e inserción del Admin inicial
@@ -54,12 +52,17 @@ async def lifespan(app: FastAPI):
             session.commit()
             print("--> Admin inicial configurado (Usuario: 'admin' / Clave: 'admin123')")
 
-    await telegram_bridge.start()
+    # 🛡️ PROTECCIÓN EN EL INICIO DE TELETHON
+    try:
+        await telegram_bridge.start()
+        print("--> Cliente Telethon (telegram_bridge) iniciado correctamente.")
+    except Exception as e:
+        print(f"⚠️ ADVERTENCIA: No se pudo iniciar telegram_bridge: {e}")
+
     asyncio.create_task(job_queue.start_worker())
 
     # 🔹 INICIAR EL PROGRAMADOR DE TAREAS PARA REVISAR VENCIMIENTOS
     scheduler = BackgroundScheduler()
-    # Ejecuta la revisión todos los días a las 09:00 AM
     scheduler.add_job(check_subscriptions_and_notify, 'cron', hour=9, minute=0)
     scheduler.start()
     print("--> Tarea programada de notificación de vencimientos iniciada.")
@@ -67,7 +70,10 @@ async def lifespan(app: FastAPI):
     yield
 
     # Detener tareas al apagar el servidor
-    scheduler.shutdown()
+    try:
+        scheduler.shutdown()
+    except Exception:
+        pass
 
 app = FastAPI(lifespan=lifespan)
 
