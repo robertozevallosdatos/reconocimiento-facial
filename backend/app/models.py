@@ -36,6 +36,7 @@ class PDFFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     filename: str
     file_path: str
+    image_path: Optional[str] = None  # 👈 Guardará la ruta de la imagen original
     uploaded_at: datetime = Field(default_factory=utc_now)
 
     folder_id: int = Field(foreign_key="folder.id")

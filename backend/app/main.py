@@ -5,11 +5,13 @@ import shutil
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import text
 
 from app.config import settings
 from app.database import create_db_and_tables, engine, get_session
@@ -18,13 +20,10 @@ from app.auth import get_password_hash, get_current_user, check_subscription_sta
 from app.telegram_client import telegram_bridge
 from app.queue_manager import job_queue
 from app.routes import auth, folders
-from app.services.scheduler import check_subscriptions_and_notify  # 👈 Importamos el programador
-from sqlalchemy import text
+from app.services.scheduler import check_subscriptions_and_notify
 
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("downloads", exist_ok=True)
-
-from sqlalchemy import text # 👈 Asegúrate de tener este import arriba en el archivo
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,7 +34,14 @@ async def lifespan(app: FastAPI):
         try:
             session.exec(text('ALTER TABLE "user" ADD COLUMN telegram_chat_id VARCHAR;'))
             session.commit()
-            print("--> Columna telegram_chat_id agregada con éxito.")
+        except Exception:
+            session.rollback()
+
+        # Migración para agregar image_path a pdffile si no existe
+        try:
+            session.exec(text('ALTER TABLE "pdffile" ADD COLUMN image_path VARCHAR;'))
+            session.commit()
+            print("--> Columna image_path agregada a pdffile con éxito.")
         except Exception:
             session.rollback()
 
@@ -61,7 +67,7 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(job_queue.start_worker())
 
-    # 🔹 INICIAR EL PROGRAMADOR DE TAREAS PARA REVISAR VENCIMIENTOS
+    # 🔹 PROGRAMADOR DE TAREAS
     scheduler = BackgroundScheduler()
     scheduler.add_job(check_subscriptions_and_notify, 'cron', hour=9, minute=0)
     scheduler.start()
@@ -69,7 +75,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Detener tareas al apagar el servidor
     try:
         scheduler.shutdown()
     except Exception:
@@ -84,6 +89,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 🖼️ MONTAJE DE CARPETA UPLOADS PARA VISTA PREVIA DE IMÁGENES
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.include_router(auth.router)
 app.include_router(folders.router)
@@ -145,9 +153,11 @@ async def convert_image(
         final_pdf_path = os.path.join(folder_dir, final_pdf_filename)
         shutil.move(pdf_temp_path, final_pdf_path)
 
+        # 🔹 Guardamos la ruta de la foto en 'image_path'
         pdf_entry = PDFFile(
             filename=final_pdf_filename,
             file_path=final_pdf_path,
+            image_path=temp_input_path,
             folder_id=target_folder.id,
             uploaded_by_id=current_user.id
         )
@@ -155,13 +165,14 @@ async def convert_image(
         session.commit()
         session.refresh(pdf_entry)
 
-        background_tasks.add_task(cleanup_temp_file, temp_input_path)
+        # ⚠️ Se removió el cleanup_temp_file para conservar la imagen original y ver su vista previa
 
         return {
             "message": "Convertido y guardado exitosamente.",
             "pdf_id": pdf_entry.id,
             "filename": final_pdf_filename,
-            "folder_name": target_folder.name
+            "folder_name": target_folder.name,
+            "image_url": f"/uploads/{os.path.basename(temp_input_path)}"
         }
 
     except asyncio.TimeoutError:
@@ -193,3 +204,65 @@ def download_pdf(
         filename=pdf_entry.filename,
         media_type="application/pdf"
     )
+
+
+# 🗑️ NUEVA RUTA: ELIMINAR PDF Y SU IMAGEN ASOCIADA
+@app.delete("/api/pdfs/{pdf_id}")
+def delete_pdf(
+    pdf_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    pdf_entry = session.get(PDFFile, pdf_id)
+    if not pdf_entry:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado.")
+
+    if not current_user.is_admin and current_user.folder_id != pdf_entry.folder_id:
+        raise HTTPException(status_code=403, detail="No tienes acceso para eliminar este archivo.")
+
+    # Eliminar PDF físico
+    if pdf_entry.file_path and os.path.exists(pdf_entry.file_path):
+        try:
+            os.remove(pdf_entry.file_path)
+        except Exception:
+            pass
+
+    # Eliminar imagen física asociada
+    if pdf_entry.image_path and os.path.exists(pdf_entry.image_path):
+        try:
+            os.remove(pdf_entry.image_path)
+        except Exception:
+            pass
+
+    session.delete(pdf_entry)
+    session.commit()
+    return {"message": "Archivo e imagen eliminados con éxito."}
+
+
+# ✏️ NUEVA RUTA: RENOMBRAR PDF
+@app.patch("/api/pdfs/{pdf_id}")
+def rename_pdf(
+    pdf_id: int,
+    new_name: str = Body(..., embed=True),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    pdf_entry = session.get(PDFFile, pdf_id)
+    if not pdf_entry:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado.")
+
+    if not current_user.is_admin and current_user.folder_id != pdf_entry.folder_id:
+        raise HTTPException(status_code=403, detail="No tienes acceso para renombrar este archivo.")
+
+    clean_name = new_name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="El nombre no puede estar vacío.")
+
+    if not clean_name.endswith(".pdf"):
+        clean_name += ".pdf"
+
+    pdf_entry.filename = clean_name
+    session.add(pdf_entry)
+    session.commit()
+
+    return {"message": "Nombre del archivo actualizado con éxito.", "filename": clean_name}
