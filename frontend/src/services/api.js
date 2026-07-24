@@ -1,5 +1,4 @@
-const API_URL = 'http://localhost:8000/api';
-
+const API_URL = import.meta.env.VITE_API_URL || 'https://telegram-bridge-backend.onrender.com/api';
 export const authService = {
   getToken: () => localStorage.getItem('token'),
   getUser: () => JSON.parse(localStorage.getItem('user') || 'null'),
